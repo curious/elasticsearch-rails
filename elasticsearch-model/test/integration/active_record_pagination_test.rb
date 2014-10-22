@@ -6,9 +6,14 @@ module Elasticsearch
     class ActiveRecordPaginationTest < Elasticsearch::Test::IntegrationTestCase
       context "ActiveRecord pagination" do
         setup do
+          class ::Author < ActiveRecord::Base
+            has_many :articles_for_pagination
+          end
+
           class ::ArticleForPagination < ActiveRecord::Base
             include Elasticsearch::Model
 
+            belongs_to :author
             scope :published, -> { where(published: true) }
 
             settings index: { number_of_shards: 1, number_of_replicas: 0 } do
@@ -21,9 +26,14 @@ module Elasticsearch
 
           ActiveRecord::Schema.define(:version => 1) do
             create_table ::ArticleForPagination.table_name do |t|
+              t.integer  :author_id
               t.string   :title
               t.datetime :created_at, :default => 'NOW()'
               t.boolean  :published
+            end
+
+            create_table ::Author.table_name do |t|
+              t.string :name
             end
           end
 
@@ -31,9 +41,10 @@ module Elasticsearch
 
           ArticleForPagination.delete_all
           ArticleForPagination.__elasticsearch__.create_index! force: true
+          author = Author.create! name: 'Test Tester'
 
           68.times do |i|
-            ::ArticleForPagination.create! title: "Test #{i}", published: (i % 2 == 0)
+            ::ArticleForPagination.create! title: "Test #{i}", published: (i % 2 == 0), author_id: author.id
           end
 
           ArticleForPagination.import
@@ -102,17 +113,9 @@ module Elasticsearch
           assert_equal 12, records.size
         end
 
-        should "respect sort" do
-          search = ArticleForPagination.search({ query: { match: { title: 'test' } }, sort: [ { id: 'desc' } ] })
-
-          records = search.page(2).records
-          assert_equal 43, records.first.id         # 68 - 25 = 42
-
-          records = search.page(3).records
-          assert_equal 18, records.first.id         # 68 - (2 * 25) = 18
-
-          records = search.page(2).per(5).records
-          assert_equal 63, records.first.id         # 68 - 5 = 63
+        should "maintain pagination after scope" do
+          records = ArticleForPagination.search('title:test').page(1).records.includes(:author)
+          assert_equal 68, records.total_entries
         end
 
         should "set the limit per request" do
