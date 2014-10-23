@@ -17,6 +17,7 @@ module Elasticsearch
           #
           def records
             criteria = klass.where(:id.in => ids)
+            criteria = apply_deferred_calls(criteria)
 
             criteria.instance_exec(response.response['hits']['hits']) do |hits|
               define_singleton_method :to_a do

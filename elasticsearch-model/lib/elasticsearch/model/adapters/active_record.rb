@@ -14,6 +14,8 @@ module Elasticsearch
           #
           def records
             sql_records = klass.where(klass.primary_key => ids)
+            # Apply any calls that we deferred until the records were requested
+            sql_records = apply_deferred_calls(sql_records)
 
             # Re-order records based on the order from Elasticsearch hits
             # by redefining `to_a`, unless the user has called `order()`
@@ -57,6 +59,15 @@ module Elasticsearch
             end
 
             sql_records
+          end
+
+          # Methods that should not be passed to records at call time, but instead should be
+          # stored and applied when converting to a relation.
+          # We want to defer the application of these methods to the 'records' method, in order to preserve the (paginated)
+          # Records instance until we actually need the AR relation.
+          # TODO: it would be nice to allow a user to configure this.
+          def deferred_methods
+            [:includes, :preload, :eager_load]
           end
         end
 
