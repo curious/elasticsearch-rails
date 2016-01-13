@@ -12,6 +12,7 @@ module Elasticsearch
         include Elasticsearch::Persistence::Model::Rails
 
         settings index: { number_of_shards: 1 }
+        document_type 'human_being'
 
         attribute :name, String,
                   mapping: { fields: {
@@ -51,7 +52,7 @@ module Elasticsearch
 
         should "save and find the object" do
           person = Person.new name: 'John Smith', birthday: Date.parse('1970-01-01')
-          person.save
+          assert person.save
 
           assert_not_nil person.id
           document = Person.find(person.id)
@@ -60,7 +61,21 @@ module Elasticsearch
           assert_equal 'John Smith', document.name
           assert_equal 'John Smith', Person.find(person.id).name
 
-          assert_not_nil Elasticsearch::Persistence.client.get index: 'people', type: 'person', id: person.id
+          assert_not_nil Elasticsearch::Persistence.client.get index: 'people', type: 'human_being', id: person.id
+        end
+
+        should "not save an invalid object" do
+          person = Person.new name: nil
+          assert ! person.save
+        end
+
+        should "save an invalid object with the :validate option" do
+          person = Person.new name: nil, salary: 100
+          assert person.save validate: false
+
+          assert_not_nil person.id
+          document = Person.find(person.id)
+          assert_equal 100, document.salary
         end
 
         should "delete the object" do
@@ -127,6 +142,41 @@ module Elasticsearch
 
           found = Person.find(person.id)
           assert found.updated_at > updated_at, [found.updated_at, updated_at].inspect
+        end
+
+        should 'update the object timestamp on save' do
+          person = Person.create name: 'John Smith'
+          person.admin = true
+          sleep 1
+          person.save
+
+          Person.gateway.refresh_index!
+
+          found = Person.find(person.id)
+
+          # Compare without milliseconds
+          assert_equal person.updated_at.to_i, found.updated_at.to_i
+        end
+
+        should "respect the version" do
+          person = Person.create name: 'John Smith'
+
+          person.update( { name: 'UPDATE 1' })
+
+          assert_raise Elasticsearch::Transport::Transport::Errors::Conflict do
+            person.update( { name: 'UPDATE 2' }, { version: 1 } )
+          end
+        end
+
+        should "find all instances" do
+          Person.create name: 'John Smith'
+          Person.create name: 'Mary Smith'
+          Person.gateway.refresh_index!
+
+          people = Person.all
+
+          assert_equal 2, people.total
+          assert_equal 2, people.size
         end
 
         should "find instances by search" do

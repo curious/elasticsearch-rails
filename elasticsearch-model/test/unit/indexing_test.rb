@@ -12,6 +12,8 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
       end
     end
 
+    class NotFound < Exception; end
+
     context "Settings class" do
       should "be convertible to hash" do
         hash     = { foo: 'bar' }
@@ -26,11 +28,25 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         assert_instance_of Elasticsearch::Model::Indexing::Settings, DummyIndexingModel.settings
       end
 
-      should "update and return the index settings" do
+      should "update and return the index settings from a hash" do
         DummyIndexingModel.settings foo: 'boo'
         DummyIndexingModel.settings bar: 'bam'
 
         assert_equal( {foo: 'boo', bar: 'bam'},  DummyIndexingModel.settings.to_hash)
+      end
+
+      should "update and return the index settings from a yml file" do
+        DummyIndexingModel.settings File.open("test/support/model.yml")
+        DummyIndexingModel.settings bar: 'bam'
+
+        assert_equal( {foo: 'boo', bar: 'bam', 'baz' => 'qux'}, DummyIndexingModel.settings.to_hash)
+      end
+
+      should "update and return the index settings from a json file" do
+        DummyIndexingModel.settings File.open("test/support/model.json")
+        DummyIndexingModel.settings bar: 'bam'
+
+        assert_equal( {foo: 'boo', bar: 'bam', 'baz' => 'qux'}, DummyIndexingModel.settings.to_hash)
       end
 
       should "evaluate the block" do
@@ -74,6 +90,28 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         assert_equal 'string', mappings.to_hash[:mytype][:properties][:bar][:type]
       end
 
+      should "define multiple fields" do
+        mappings = Elasticsearch::Model::Indexing::Mappings.new :mytype
+
+        mappings.indexes :foo_1, type: 'string' do
+          indexes :raw, analyzer: 'keyword'
+        end
+
+        mappings.indexes :foo_2, type: 'multi_field' do
+          indexes :raw, analyzer: 'keyword'
+        end
+
+        assert_equal 'string',  mappings.to_hash[:mytype][:properties][:foo_1][:type]
+        assert_equal 'string',  mappings.to_hash[:mytype][:properties][:foo_1][:fields][:raw][:type]
+        assert_equal 'keyword', mappings.to_hash[:mytype][:properties][:foo_1][:fields][:raw][:analyzer]
+        assert_nil              mappings.to_hash[:mytype][:properties][:foo_1][:properties]
+
+        assert_equal 'multi_field',  mappings.to_hash[:mytype][:properties][:foo_2][:type]
+        assert_equal 'string',  mappings.to_hash[:mytype][:properties][:foo_2][:fields][:raw][:type]
+        assert_equal 'keyword', mappings.to_hash[:mytype][:properties][:foo_2][:fields][:raw][:analyzer]
+        assert_nil              mappings.to_hash[:mytype][:properties][:foo_2][:properties]
+      end
+
       should "define embedded properties" do
         mappings = Elasticsearch::Model::Indexing::Mappings.new :mytype
 
@@ -81,20 +119,35 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
           indexes :bar
         end
 
-        mappings.indexes :multi, type: 'multi_field' do
-          indexes :multi, analyzer: 'snowball'
-          indexes :raw,   analyzer: 'keyword'
+        mappings.indexes :foo_object, type: 'object' do
+          indexes :bar
         end
 
+        mappings.indexes :foo_nested, type: 'nested' do
+          indexes :bar
+        end
+
+        mappings.indexes :foo_nested_as_symbol, type: :nested do
+          indexes :bar
+        end
+
+        # Object is the default when `type` is missing and there's a block passed
+        #
         assert_equal 'object', mappings.to_hash[:mytype][:properties][:foo][:type]
         assert_equal 'string', mappings.to_hash[:mytype][:properties][:foo][:properties][:bar][:type]
+        assert_nil             mappings.to_hash[:mytype][:properties][:foo][:fields]
 
-        assert_equal 'multi_field', mappings.to_hash[:mytype][:properties][:multi][:type]
-        assert_equal 'snowball', mappings.to_hash[:mytype][:properties][:multi][:fields][:multi][:analyzer]
-        assert_equal 'keyword',  mappings.to_hash[:mytype][:properties][:multi][:fields][:raw][:analyzer]
-      end
+        assert_equal 'object', mappings.to_hash[:mytype][:properties][:foo_object][:type]
+        assert_equal 'string', mappings.to_hash[:mytype][:properties][:foo_object][:properties][:bar][:type]
+        assert_nil             mappings.to_hash[:mytype][:properties][:foo_object][:fields]
 
-      should "define multi_field properties" do
+        assert_equal 'nested', mappings.to_hash[:mytype][:properties][:foo_nested][:type]
+        assert_equal 'string', mappings.to_hash[:mytype][:properties][:foo_nested][:properties][:bar][:type]
+        assert_nil             mappings.to_hash[:mytype][:properties][:foo_nested][:fields]
+
+        assert_equal :nested, mappings.to_hash[:mytype][:properties][:foo_nested_as_symbol][:type]
+        assert_not_nil        mappings.to_hash[:mytype][:properties][:foo_nested_as_symbol][:properties]
+        assert_nil            mappings.to_hash[:mytype][:properties][:foo_nested_as_symbol][:fields]
       end
     end
 
@@ -104,8 +157,8 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
       end
 
       should "update and return the index mappings" do
-        DummyIndexingModel.mappings foo: 'boo' do; end
-        DummyIndexingModel.mappings bar: 'bam' do; end
+        DummyIndexingModel.mappings foo: 'boo'
+        DummyIndexingModel.mappings bar: 'bam'
         assert_equal( { dummy_indexing_model: { foo: "boo", bar: "bam", properties: {} } },
                       DummyIndexingModel.mappings.to_hash )
       end
@@ -336,6 +389,7 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
           assert_equal 'bar',  payload[:type]
           assert_equal '1',    payload[:id]
           assert_equal({title: 'green'}, payload[:body][:doc])
+          true
         end
 
         instance.expects(:client).returns(client)
@@ -356,6 +410,7 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
           assert_equal '1',    payload[:id]
           assert_equal({title: 'green'}, payload[:body][:doc])
           assert_equal true,   payload[:refresh]
+          true
         end
 
         instance.expects(:client).returns(client)
@@ -364,6 +419,55 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         instance.expects(:id).returns('1')
 
         instance.update_document_attributes( { title: "green" }, { refresh: true } )
+      end
+    end
+
+    context "Checking for index existence" do
+      context "the index exists" do
+        should "return true" do
+          indices = mock('indices', exists: true)
+          client  = stub('client', indices: indices)
+
+          DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+
+          assert_equal true, DummyIndexingModelForRecreate.index_exists?
+        end
+      end
+
+      context "the index does not exists" do
+        should "return false" do
+          indices = mock('indices', exists: false)
+          client  = stub('client', indices: indices)
+
+          DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+
+          assert_equal false, DummyIndexingModelForRecreate.index_exists?
+        end
+      end
+
+      context "the indices raises" do
+        should "return false" do
+          client  = stub('client')
+          client.expects(:indices).raises(StandardError)
+
+          DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+
+          assert_equal false, DummyIndexingModelForRecreate.index_exists?
+        end
+      end
+
+      context "the indices raises" do
+        should "return false" do
+          indices = stub('indices')
+          client  = stub('client')
+          client.expects(:indices).returns(indices)
+
+          indices.expects(:exists).raises(StandardError)
+
+          DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+
+          assert_equal false, DummyIndexingModelForRecreate.index_exists?
+        end
       end
     end
 
@@ -380,27 +484,46 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         end
       end
 
-      should "delete the index without raising exception" do
+      should "delete the index without raising exception when the index is not found" do
         client  = stub('client')
         indices = stub('indices')
         client.stubs(:indices).returns(indices)
 
-        indices.expects(:delete).returns({}).then.raises(Exception).at_least_once
+        indices.expects(:delete).returns({}).then.raises(NotFound).at_least_once
 
         DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
 
-        assert_nothing_raised do
-          DummyIndexingModelForRecreate.delete_index!
-          DummyIndexingModelForRecreate.delete_index!
-        end
+        assert_nothing_raised { DummyIndexingModelForRecreate.delete_index! force: true }
+      end
+
+      should "raise an exception without the force option" do
+        client  = stub('client')
+        indices = stub('indices')
+        client.stubs(:indices).returns(indices)
+
+        indices.expects(:delete).raises(NotFound)
+
+        DummyIndexingModelForRecreate.expects(:client).returns(client)
+
+        assert_raise(NotFound) { DummyIndexingModelForRecreate.delete_index! }
+      end
+
+      should "raise a regular exception when deleting the index" do
+        client  = stub('client')
+
+        indices = stub('indices')
+        indices.expects(:delete).raises(Exception)
+        client.stubs(:indices).returns(indices)
+
+        DummyIndexingModelForRecreate.expects(:client).returns(client)
+
+        assert_raise(Exception) { DummyIndexingModelForRecreate.delete_index! force: true }
       end
 
       should "create the index with correct settings and mappings when it doesn't exist" do
         client  = stub('client')
         indices = stub('indices')
         client.stubs(:indices).returns(indices)
-
-        indices.expects(:exists).returns(false)
 
         indices.expects(:create).with do |payload|
           assert_equal 'dummy_indexing_model_for_recreates', payload[:index]
@@ -409,6 +532,7 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
           true
         end.returns({})
 
+        DummyIndexingModelForRecreate.expects(:index_exists?).returns(false)
         DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
 
         assert_nothing_raised { DummyIndexingModelForRecreate.create_index! }
@@ -419,28 +543,26 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         indices = stub('indices')
         client.stubs(:indices).returns(indices)
 
-        indices.expects(:exists).returns(true)
-
         indices.expects(:create).never
 
-        DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+        DummyIndexingModelForRecreate.expects(:index_exists?).returns(true)
+        DummyIndexingModelForRecreate.expects(:client).returns(client).never
 
         assert_nothing_raised { DummyIndexingModelForRecreate.create_index! }
       end
 
-      should "not raise exception during index creation" do
+      should "raise exception during index creation" do
         client  = stub('client')
         indices = stub('indices')
         client.stubs(:indices).returns(indices)
 
-        indices.expects(:exists).returns(false)
+        indices.expects(:delete).returns({})
         indices.expects(:create).raises(Exception).at_least_once
 
+        DummyIndexingModelForRecreate.expects(:index_exists?).returns(false)
         DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
 
-        assert_nothing_raised do
-          DummyIndexingModelForRecreate.create_index!
-        end
+        assert_raise(Exception) { DummyIndexingModelForRecreate.create_index! force: true }
       end
 
       should "delete the index first with the force option" do
@@ -449,9 +571,9 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         client.stubs(:indices).returns(indices)
 
         indices.expects(:delete).returns({})
-        indices.expects(:exists).returns(false)
         indices.expects(:create).returns({}).at_least_once
 
+        DummyIndexingModelForRecreate.expects(:index_exists?).returns(false)
         DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
 
         assert_nothing_raised do
@@ -459,7 +581,19 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         end
       end
 
-      should "refresh the index without raising exception" do
+      should "refresh the index without raising exception with the force option" do
+        client  = stub('client')
+        indices = stub('indices')
+        client.stubs(:indices).returns(indices)
+
+        indices.expects(:refresh).returns({}).then.raises(NotFound).at_least_once
+
+        DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
+
+        assert_nothing_raised { DummyIndexingModelForRecreate.refresh_index! force: true }
+      end
+
+      should "raise a regular exception when refreshing the index" do
         client  = stub('client')
         indices = stub('indices')
         client.stubs(:indices).returns(indices)
@@ -468,10 +602,7 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
 
         DummyIndexingModelForRecreate.expects(:client).returns(client).at_least_once
 
-        assert_nothing_raised do
-          DummyIndexingModelForRecreate.refresh_index!
-          DummyIndexingModelForRecreate.refresh_index!
-        end
+        assert_nothing_raised { DummyIndexingModelForRecreate.refresh_index! force: true }
       end
 
       context "with a custom index name" do
@@ -483,12 +614,11 @@ class Elasticsearch::Model::IndexingTest < Test::Unit::TestCase
         end
 
         should "create the custom index" do
-          @indices.expects(:exists).with do |arguments|
+          @indices.expects(:create).with do |arguments|
             assert_equal 'custom-foo', arguments[:index]
             true
           end
-
-          @indices.expects(:create).with do |arguments|
+          DummyIndexingModelForRecreate.expects(:index_exists?).with do |arguments|
             assert_equal 'custom-foo', arguments[:index]
             true
           end

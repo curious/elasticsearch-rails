@@ -20,8 +20,8 @@ module Elasticsearch
             Elasticsearch::Model::Response::Results.__send__ :include, ::Kaminari::PageScopeMethods
             Elasticsearch::Model::Response::Records.__send__ :include, ::Kaminari::PageScopeMethods
 
-            Elasticsearch::Model::Response::Results.__send__ :delegate, :limit_value, :offset_value, :total_count, to: :response
-            Elasticsearch::Model::Response::Records.__send__ :delegate, :limit_value, :offset_value, :total_count, to: :response
+            Elasticsearch::Model::Response::Results.__send__ :delegate, :limit_value, :offset_value, :total_count, :max_pages, to: :response
+            Elasticsearch::Model::Response::Records.__send__ :delegate, :limit_value, :offset_value, :total_count, :max_pages, to: :response
 
             base.class_eval <<-RUBY, __FILE__, __LINE__ + 1
               # Define the `page` Kaminari method
@@ -31,7 +31,7 @@ module Elasticsearch
                 @records  = nil
                 @response = nil
                 @page     = [num.to_i, 1].max
-                @per_page ||= klass.default_per_page
+                @per_page ||= __default_per_page
 
                 self.search.definition.update size: @per_page,
                                               from: @per_page * (@page - 1)
@@ -48,7 +48,7 @@ module Elasticsearch
               when search.definition[:size]
                 search.definition[:size]
               else
-                search.klass.default_per_page
+                __default_per_page
             end
           end
 
@@ -66,10 +66,11 @@ module Elasticsearch
           # Set the "limit" (`size`) value
           #
           def limit(value)
+            return self if value.to_i <= 0
             @results  = nil
             @records  = nil
             @response = nil
-            @per_page = value
+            @per_page = value.to_i
 
             search.definition.update :size => @per_page
             search.definition.update :from => @per_page * (@page - 1) if @page
@@ -79,11 +80,12 @@ module Elasticsearch
           # Set the "offset" (`from`) value
           #
           def offset(value)
+            return self if value.to_i < 0
             @results  = nil
             @records  = nil
             @response = nil
             @page     = nil
-            search.definition.update :from => value
+            search.definition.update :from => value.to_i
             self
           end
 
@@ -91,6 +93,14 @@ module Elasticsearch
           #
           def total_count
             results.total
+          end
+
+          # Returns the models's `per_page` value or the default
+          #
+          # @api private
+          #
+          def __default_per_page
+            klass.respond_to?(:default_per_page) && klass.default_per_page || ::Kaminari.config.default_per_page
           end
         end
 
@@ -122,8 +132,9 @@ module Elasticsearch
           #     Article.search('foo').paginate(page: 1, per_page: 30)
           #
           def paginate(options)
-            page = [options[:page].to_i, 1].max
-            per_page = (options[:per_page] || klass.per_page).to_i
+            param_name = options[:param_name] || :page
+            page       = [options[param_name].to_i, 1].max
+            per_page   = (options[:per_page] || __default_per_page).to_i
 
             search.definition.update size: per_page,
                                      from: (page - 1) * per_page
@@ -164,6 +175,14 @@ module Elasticsearch
           #
           def total_entries
             results.total
+          end
+
+          # Returns the models's `per_page` value or the default
+          #
+          # @api private
+          #
+          def __default_per_page
+            klass.respond_to?(:per_page) && klass.per_page || ::WillPaginate.per_page
           end
         end
       end

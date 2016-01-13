@@ -129,7 +129,7 @@ Or configure the client for all models:
 Elasticsearch::Model.client = Elasticsearch::Client.new log: true
 ```
 
-You might want to do this during you application bootstrap process, e.g. in a Rails initializer.
+You might want to do this during your application bootstrap process, e.g. in a Rails initializer.
 
 Please refer to the
 [`elasticsearch-transport`](https://github.com/elasticsearch/elasticsearch-ruby/tree/master/elasticsearch-transport)
@@ -216,8 +216,9 @@ response.records.to_a
 ```
 
 The returned object is the genuine collection of model instances returned by your database,
-i.e. `ActiveRecord::Relation` for ActiveRecord, or `Mongoid::Criteria` in case of MongoDB. This allows you to
-chain other methods on top of search results, as you would normally do:
+i.e. `ActiveRecord::Relation` for ActiveRecord, or `Mongoid::Criteria` in case of MongoDB.
+
+This allows you to chain other methods on top of search results, as you would normally do:
 
 ```ruby
 response.records.where(title: 'Quick brown fox').to_a
@@ -228,7 +229,7 @@ response.records.records.class
 # => ActiveRecord::Relation::ActiveRecord_Relation_Article
 ```
 
-The ordering of the records by score will be preserved, unless you explicitely specify a different
+The ordering of the records by score will be preserved, unless you explicitly specify a different
 order in your model query language:
 
 ```ruby
@@ -252,11 +253,35 @@ response.records.each_with_hit { |record, hit| puts "* #{record.title}: #{hit._s
 # * Fast black dogs: 0.02250402
 ```
 
+#### Searching multiple models
+
+It is possible to search across multiple models with the module method:
+
+```ruby
+Elasticsearch::Model.search('fox', [Article, Comment]).results.to_a.map(&:to_hash)
+# => [
+#      {"_index"=>"articles", "_type"=>"article", "_id"=>"1", "_score"=>0.35136628, "_source"=>...},
+#      {"_index"=>"comments", "_type"=>"comment", "_id"=>"1", "_score"=>0.35136628, "_source"=>...}
+#    ]
+
+Elasticsearch::Model.search('fox', [Article, Comment]).records.to_a
+# Article Load (0.3ms)  SELECT "articles".* FROM "articles" WHERE "articles"."id" IN (1)
+# Comment Load (0.2ms)  SELECT "comments".* FROM "comments" WHERE "comments"."id" IN (1,5)
+# => [#<Article id: 1, title: "Quick brown fox">, #<Comment id: 1, body: "Fox News">,  ...]
+```
+
+By default, all models which include the `Elasticsearch::Model` module are searched.
+
+NOTE: It is _not_ possible to chain other methods on top of the `records` object, since it
+      is a heterogenous collection, with models potentially backed by different databases.
+
 #### Pagination
 
 You can implement pagination with the `from` and `size` search parameters. However, search results
 can be automatically paginated with the [`kaminari`](http://rubygems.org/gems/kaminari) or
 [`will_paginate`](https://github.com/mislav/will_paginate) gems.
+(The pagination gems must be added before the Elasticsearch gems in your Gemfile,
+or loaded first in your application.)
 
 If Kaminari or WillPaginate is loaded, use the familiar paging methods:
 
@@ -430,15 +455,15 @@ class Article < ActiveRecord::Base
   include Elasticsearch::Model
 
   after_commit on: [:create] do
-    index_document if self.published?
+    __elasticsearch__.index_document if self.published?
   end
 
   after_commit on: [:update] do
-    update_document if self.published?
+    __elasticsearch__.update_document if self.published?
   end
 
   after_commit on: [:destroy] do
-    delete_document if self.published?
+    __elasticsearch__.delete_document if self.published?
   end
 end
 ```

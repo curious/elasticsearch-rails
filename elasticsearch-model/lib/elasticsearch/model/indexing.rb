@@ -34,7 +34,10 @@ module Elasticsearch
       # Wraps the [index mappings](http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/mapping.html)
       #
       class Mappings
-        attr_accessor :options
+        attr_accessor :options, :type
+
+        # @private
+        TYPES_WITH_EMBEDDED_PROPERTIES = %w(object nested)
 
         def initialize(type, options={})
           raise ArgumentError, "`type` is missing" if type.nil?
@@ -44,12 +47,12 @@ module Elasticsearch
           @mapping = {}
         end
 
-        def indexes(name, options = {}, &block)
+        def indexes(name, options={}, &block)
           @mapping[name] = options
 
           if block_given?
             @mapping[name][:type] ||= 'object'
-            properties = @mapping[name][:type] == 'multi_field' ? :fields : :properties
+            properties = TYPES_WITH_EMBEDDED_PROPERTIES.include?(@mapping[name][:type].to_s) ? :properties : :fields
 
             @mapping[name][properties] ||= {}
 
@@ -63,7 +66,6 @@ module Elasticsearch
           end
 
           # Set the type to `string` by default
-          #
           @mapping[name][:type] ||= 'string'
 
           self
@@ -128,14 +130,14 @@ module Elasticsearch
         #     # => {:article=>{:dynamic=>"strict", :properties=>{:foo=>{:type=>"long"}}}}
         #
         # The `mappings` and `settings` methods are accessible directly on the model class,
-        # when it doesn't already defines them. Use the `__elasticsearch__` proxy otherwise.
+        # when it doesn't already define them. Use the `__elasticsearch__` proxy otherwise.
         #
         def mapping(options={}, &block)
           @mapping ||= Mappings.new(document_type, options)
 
-          if block_given?
-            @mapping.options.update(options)
+          @mapping.options.update(options) unless options.empty?
 
+          if block_given?
             @mapping.instance_eval(&block)
             return self
           else
@@ -153,7 +155,39 @@ module Elasticsearch
         #
         #     # => {:index=>{:number_of_shards=>1}}
         #
+        # You can read settings from any object that responds to :read
+        # as long as its return value can be parsed as either YAML or JSON.
+        #
+        # @example Define index settings from YAML file
+        #
+        #     # config/elasticsearch/articles.yml:
+        #     #
+        #     # index:
+        #     #   number_of_shards: 1
+        #     #
+        #
+        #     Article.settings File.open("config/elasticsearch/articles.yml")
+        #
+        #     Article.settings.to_hash
+        #
+        #     # => { "index" => { "number_of_shards" => 1 } }
+        #
+        #
+        # @example Define index settings from JSON file
+        #
+        #     # config/elasticsearch/articles.json:
+        #     #
+        #     # { "index": { "number_of_shards": 1 } }
+        #     #
+        #
+        #     Article.settings File.open("config/elasticsearch/articles.json")
+        #
+        #     Article.settings.to_hash
+        #
+        #     # => { "index" => { "number_of_shards" => 1 } }
+        #
         def settings(settings={}, &block)
+          settings = YAML.load(settings.read) if settings.respond_to?(:read)
           @settings ||= Settings.new(settings)
 
           @settings.settings.update(settings) unless settings.empty?
@@ -164,6 +198,10 @@ module Elasticsearch
           else
             @settings
           end
+        end
+
+        def load_settings_from_io(settings)
+          YAML.load(settings.read)
         end
 
         # Creates an index with correct name, automatically passing
@@ -186,19 +224,28 @@ module Elasticsearch
 
           delete_index!(options.merge index: target_index) if options[:force]
 
-          unless ( self.client.indices.exists(index: target_index) rescue false )
-            begin
-              self.client.indices.create index: target_index,
-                                         body: {
-                                           settings: self.settings.to_hash,
-                                           mappings: self.mappings.to_hash }
-            rescue Exception => e
-              unless e.class.to_s =~ /NotFound/ && options[:force]
-                STDERR.puts "[!!!] Error when creating the index: #{e.class}", "#{e.message}"
-              end
-            end
-          else
+          unless index_exists?(index: target_index)
+            self.client.indices.create index: target_index,
+                                       body: {
+                                         settings: self.settings.to_hash,
+                                         mappings: self.mappings.to_hash }
           end
+        end
+
+        # Returns true if the index exists
+        #
+        # @example Check whether the model's index exists
+        #
+        #     Article.__elasticsearch__.index_exists?
+        #
+        # @example Check whether a specific index exists
+        #
+        #     Article.__elasticsearch__.index_exists? index: 'my-index'
+        #
+        def index_exists?(options={})
+          target_index = options[:index] || self.index_name
+
+          self.client.indices.exists(index: target_index) rescue false
         end
 
         # Deletes the index with corresponding name
@@ -217,8 +264,10 @@ module Elasticsearch
           begin
             self.client.indices.delete index: target_index
           rescue Exception => e
-            unless e.class.to_s =~ /NotFound/ && options[:force]
-              STDERR.puts "[!!!] Error when deleting the index: #{e.class}", "#{e.message}"
+            if e.class.to_s =~ /NotFound/ && options[:force]
+              STDERR.puts "[!!!] Index does not exist (#{e.class})"
+            else
+              raise e
             end
           end
         end
@@ -241,8 +290,10 @@ module Elasticsearch
           begin
             self.client.indices.refresh index: target_index
           rescue Exception => e
-            unless e.class.to_s =~ /NotFound/ && options[:force]
-              STDERR.puts "[!!!] Error when refreshing the index: #{e.class}", "#{e.message}"
+            if e.class.to_s =~ /NotFound/ && options[:force]
+              STDERR.puts "[!!!] Index does not exist (#{e.class})"
+            else
+              raise e
             end
           end
         end

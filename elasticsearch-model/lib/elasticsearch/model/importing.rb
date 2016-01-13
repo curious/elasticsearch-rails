@@ -84,7 +84,7 @@ module Elasticsearch
         #
         #     class Article
         #       # ...
-        #       def enrich(batch)
+        #       def self.enrich(batch)
         #         batch.each do |item|
         #           item.metadata = MyAPI.get_metadata(item.id)
         #         end
@@ -92,7 +92,7 @@ module Elasticsearch
         #       end
         #     end
         #
-        #    Article.import preprocess: enrich
+        #    Article.import preprocess: :enrich
         #
         # @example Return an array of error elements instead of the number of errors, eg.
         #          to try importing these records again
@@ -114,6 +114,9 @@ module Elasticsearch
 
           if options.delete(:force)
             self.create_index! force: true, index: target_index
+          elsif !self.index_exists? index: target_index
+            raise ArgumentError,
+                  "#{target_index} does not exist to be imported into. Use create_index! or the :force option to create it."
           end
 
           __find_in_batches(options) do |batch|

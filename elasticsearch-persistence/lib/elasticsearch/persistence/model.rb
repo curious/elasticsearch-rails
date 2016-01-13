@@ -71,7 +71,6 @@ module Elasticsearch
             delegate :settings,
                      :mappings,
                      :mapping,
-                     :document_type,
                      :document_type=,
                      :index_name,
                      :index_name=,
@@ -80,6 +79,13 @@ module Elasticsearch
                      :create_index!,
                      :refresh_index!,
               to: :gateway
+
+            # forward document type to mappings when set
+            def document_type(type = nil)
+              return gateway.document_type unless type
+              gateway.document_type type
+              mapping.type = type
+            end
           end
 
           # Configure the repository based on the model (set up index_name, etc)
@@ -102,6 +108,7 @@ module Elasticsearch
               object.instance_variable_set :@_index,   document['_index']
               object.instance_variable_set :@_type,    document['_type']
               object.instance_variable_set :@_version, document['_version']
+              object.instance_variable_set :@_source,  document['_source']
 
               # Store the "hit" information (highlighting, score, ...)
               #
@@ -115,8 +122,8 @@ module Elasticsearch
 
           # Set up common attributes
           #
-          attribute :created_at, DateTime, default: lambda { |o,a| Time.now.utc }
-          attribute :updated_at, DateTime, default: lambda { |o,a| Time.now.utc }
+          attribute :created_at, Time, default: lambda { |o,a| Time.now.utc }
+          attribute :updated_at, Time, default: lambda { |o,a| Time.now.utc }
 
           attr_reader :hit
         end

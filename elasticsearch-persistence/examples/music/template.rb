@@ -17,7 +17,7 @@
 # Usage:
 # ------
 #
-#     $ time rails new music --force --skip --skip-bundle --skip-active-record --template /Users/karmi/Contracts/Elasticsearch/Projects/Clients/Ruby/elasticsearch-rails/elasticsearch-persistence/examples/music/template.rb
+#     $ time rails new music --force --skip --skip-bundle --skip-active-record --template https://raw.githubusercontent.com/elastic/elasticsearch-rails/master/elasticsearch-persistence/examples/music/template.rb
 #
 # =====================================================================================================
 
@@ -132,6 +132,7 @@ gem "quiet_assets"
 gem "simple_form"
 
 gem 'elasticsearch', git: 'git://github.com/elasticsearch/elasticsearch-ruby.git'
+gem 'elasticsearch-model', git: 'git://github.com/elasticsearch/elasticsearch-rails.git', require: 'elasticsearch/model'
 gem 'elasticsearch-persistence', git: 'git://github.com/elasticsearch/elasticsearch-rails.git', require: 'elasticsearch/persistence/model'
 gem 'elasticsearch-rails', git: 'git://github.com/elasticsearch/elasticsearch-rails.git'
 

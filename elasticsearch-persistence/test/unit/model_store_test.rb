@@ -80,10 +80,7 @@ class Elasticsearch::Persistence::ModelStoreTest < Test::Unit::TestCase
           end
           .returns({'_id' => 'abc123'})
 
-        assert ! subject.persisted?
-
         assert subject.save
-        assert subject.persisted?
       end
 
       should "save the model and set the ID" do
@@ -106,6 +103,37 @@ class Elasticsearch::Persistence::ModelStoreTest < Test::Unit::TestCase
 
         subject.save
         assert_equal Time.parse('2014-01-01T00:00:00Z'), subject.updated_at
+      end
+
+      should "not save an invalid model" do
+        @gateway
+          .expects(:save)
+          .never
+
+        subject.instance_eval do
+          def valid?; false; end;
+        end
+
+        assert ! subject.save
+        assert ! subject.persisted?
+      end
+
+      should "skip the validation with the :validate option" do
+        @gateway
+          .expects(:save)
+          .with do |object, options|
+            assert_equal subject, object
+            assert_equal nil, options[:id]
+            true
+          end
+          .returns({'_id' => 'abc123'})
+
+        subject.instance_eval do
+          def valid?; false; end;
+        end
+
+        assert subject.save validate: false
+        assert subject.persisted?
       end
 
       should "pass the options to gateway" do
@@ -281,6 +309,40 @@ class Elasticsearch::Persistence::ModelStoreTest < Test::Unit::TestCase
           .returns({'_id' => 'abc123', 'version' => 2})
 
         assert subject.update( {}, { script: 'EXEC' } )
+      end
+
+      should "not update an invalid model" do
+        @gateway
+          .expects(:update)
+          .never
+
+        subject.instance_eval do
+          def valid?; false; end;
+        end
+
+        assert ! subject.update(title: 'INVALID')
+      end
+
+      should "skip the validation with the :validate option" do
+        subject.expects(:persisted?).returns(true).at_least_once
+        subject.expects(:id).returns('abc123').at_least_once
+
+        @gateway
+          .expects(:update)
+          .with do |object, options|
+            assert_equal 'abc123', object
+            assert_equal nil, options[:id]
+            assert_equal 'INVALID', options[:doc][:title]
+            true
+          end
+          .returns({'_id' => 'abc123'})
+
+        subject.instance_eval do
+          def valid?; false; end;
+        end
+
+        assert subject.update( { title: 'INVALID' }, { validate: false } )
+        assert subject.persisted?
       end
 
       should "pass the options to gateway" do
